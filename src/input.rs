@@ -84,7 +84,10 @@ pub fn parse_input(input: &str) -> Option<StatusInput> {
     };
 
     // Model display name.
-    let model_name = raw.model.and_then(|m| m.display_name);
+    let model_name = raw
+        .model
+        .and_then(|m| m.display_name)
+        .filter(|s| !s.is_empty());
 
     Some(StatusInput {
         token_usage,
@@ -315,6 +318,17 @@ mod tests {
         let json = r#"{
             "model": {
                 "display_name": null
+            }
+        }"#;
+        let result = parse_input(json).unwrap();
+        assert!(result.model_name.is_none());
+    }
+
+    #[test]
+    fn model_display_name_empty_string() {
+        let json = r#"{
+            "model": {
+                "display_name": ""
             }
         }"#;
         let result = parse_input(json).unwrap();

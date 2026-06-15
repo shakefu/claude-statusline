@@ -167,3 +167,38 @@ fn minimal_json_empty_object() {
     );
     assert!(stderr.is_empty());
 }
+
+// ── Segment ordering invariants ────────────────────────────────────────
+
+#[test]
+fn segment_ordering_matches_spec() {
+    // Spec requires: TokenSegment → DirectorySegment → GitBranchSegment → VenvSegment → ModelSegment
+    let json = r#"{"context_window":{"total_input_tokens":50000,"context_window_size":200000},"workspace":{"repo":{"owner":"acme","name":"widgets"}},"model":{"display_name":"Claude Sonnet 4"}}"#;
+    let (_, stdout, _) = run_binary(json);
+
+    let token_marker = "\x1b[0;36m50.0k/200.0k\x1b[0m ";
+    let dir_marker = "\x1b[0;34macme/widgets\x1b[0m";
+    let model_marker = "\x1b[0;36m [Claude Sonnet 4]\x1b[0m";
+
+    let token_pos = stdout.find(token_marker).expect("token segment not found");
+    let dir_pos = stdout.find(dir_marker).expect("directory segment not found");
+    let model_pos = stdout.find(model_marker).expect("model segment not found");
+
+    assert!(
+        token_pos < dir_pos,
+        "token segment must appear before directory segment: token@{token_pos} dir@{dir_pos}"
+    );
+    assert!(
+        dir_pos < model_pos,
+        "directory segment must appear before model segment: dir@{dir_pos} model@{model_pos}"
+    );
+
+    // Git branch (if present) must appear between directory and model
+    let git_marker = "\x1b[0;32m";
+    if let Some(git_pos) = stdout.find(git_marker) {
+        assert!(
+            dir_pos < git_pos && git_pos < model_pos,
+            "git segment must appear between directory and model: dir@{dir_pos} git@{git_pos} model@{model_pos}"
+        );
+    }
+}
