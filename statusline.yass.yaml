@@ -1,0 +1,157 @@
+# yaml-language-server: $schema=https://textla.dev/yass/v1.schema.json
+---
+description: >
+  claude-statusline — a Rust binary that reads Claude Code's JSON status
+  payload from stdin and prints an ANSI-colored single-line status bar to
+  stdout. The binary is a drop-in replacement for the bash
+  statusline-command.sh script.
+version: v1
+---
+spec: Input
+INPUT:
+- MUST: read the entire contents of stdin as a UTF-8 string
+- MUST: parse the string as JSON
+- MUST: exit with code 0 and print nothing when stdin is empty
+- MUST: exit with code 0 and print nothing when the JSON is malformed
+RETURN:
+- MUST: produce a JSON object available to all other specs
+INVARIANT:
+- MUST-NOT: accept any command-line arguments or flags
+- MUST-NOT: read any environment variable other than VIRTUAL_ENV
+---
+spec: Input.ContextWindow
+INPUT:
+- MUST: "read `.context_window.total_input_tokens` as an optional integer"
+- MUST: "read `.context_window.context_window_size` as an optional integer"
+RETURN:
+- WHEN: both fields are present and valid integers
+  MUST: produce a used-token count and a window-size count for TokenSegment
+  USES: TokenSegment
+- WHEN: either field is absent or null
+  MUST: produce no token counts
+---
+spec: Input.Workspace
+INPUT:
+- MUST: "read `.workspace.repo.owner` and `.workspace.repo.name` as optional strings"
+- MUST: "read `.workspace.current_dir` as an optional string"
+RETURN:
+- WHEN: "both `.workspace.repo.owner` and `.workspace.repo.name` are present"
+  MUST: "produce the directory label as `owner/name`"
+- WHEN: the repo object is absent or null
+  MUST: produce the directory label as the basename of current_dir
+- WHEN: current_dir is also absent
+  MUST: produce an empty directory label
+---
+spec: Input.Model
+INPUT:
+- MUST: "read `.model.display_name` as an optional string"
+RETURN:
+- MUST: produce the model display name for ModelSegment
+  USES: ModelSegment
+---
+spec: FormatTokens
+INPUT:
+- MUST: accept a non-negative integer token count
+RETURN:
+- WHEN: "the count is >= 1,000,000"
+  MUST: "format as `{n/1000000:.1}m` (one decimal place, lowercase m)"
+- WHEN: "the count is >= 1,000 and < 1,000,000"
+  MUST: "format as `{n/1000:.1}k` (one decimal place, lowercase k)"
+- WHEN: "the count is < 1,000"
+  MUST: format as the plain decimal integer with no suffix
+---
+spec: TokenSegment
+INPUT:
+- MUST: receive the used-token count and window-size count from Input.ContextWindow
+  USES: Input.ContextWindow
+RETURN:
+- WHEN: token counts are present
+  MUST: format used and window-size through FormatTokens
+  USES: FormatTokens
+- WHEN: token counts are present
+  MUST: "render as `{used}/{total}` with no space around the slash"
+- WHEN: "the used-token count is >= 100,000"
+  MUST: color the segment red (ANSI 0;31)
+- WHEN: "the used-token count is >= 60,000 and < 100,000"
+  MUST: color the segment yellow (ANSI 0;33)
+- WHEN: "the used-token count is < 60,000"
+  MUST: color the segment cyan (ANSI 0;36)
+- MUST: reset color (ANSI 0m) after the segment
+- MUST: append a single trailing space after the reset
+- WHEN: token counts are absent
+  MUST: output nothing
+INVARIANT:
+- MUST: be the first segment in the output line
+---
+spec: DirectorySegment
+INPUT:
+- MUST: receive the directory label from Input.Workspace
+  USES: Input.Workspace
+RETURN:
+- MUST: color the label blue (ANSI 0;34)
+- MUST: reset color after the label
+INVARIANT:
+- MUST: appear immediately after TokenSegment
+  USES: TokenSegment
+---
+spec: GitBranchSegment
+INPUT:
+- MUST: "run `git -c core.fsmonitor=false rev-parse --abbrev-ref HEAD` to detect the current branch"
+- MUST: "pass `core.fsmonitor=false` to avoid blocking on filesystem monitors"
+RETURN:
+- WHEN: the git command succeeds and returns a non-empty branch name
+  MUST: "render as ` ({branch})` — a leading space, parentheses around the name"
+- WHEN: the git command succeeds and returns a non-empty branch name
+  MUST: color the segment green (ANSI 0;32)
+- WHEN: the git command succeeds and returns a non-empty branch name
+  MUST: reset color after the closing parenthesis
+- WHEN: the git command fails or returns empty output
+  MUST: output nothing
+INVARIANT:
+- MUST: appear immediately after DirectorySegment
+  USES: DirectorySegment
+---
+spec: VenvSegment
+INPUT:
+- MUST: read the VIRTUAL_ENV environment variable
+RETURN:
+- WHEN: VIRTUAL_ENV is set and non-empty
+  MUST: "render as ` ({basename}) ` — a leading space, parentheses around the basename, a trailing space"
+- WHEN: VIRTUAL_ENV is set and non-empty
+  MUST: extract only the final path component as the basename
+- WHEN: VIRTUAL_ENV is set and non-empty
+  MUST: color the segment yellow (ANSI 0;33)
+- WHEN: VIRTUAL_ENV is set and non-empty
+  MUST: reset color after the trailing space
+- WHEN: VIRTUAL_ENV is unset or empty
+  MUST: output nothing
+INVARIANT:
+- MUST: appear immediately after GitBranchSegment
+  USES: GitBranchSegment
+---
+spec: ModelSegment
+INPUT:
+- MUST: receive the model display name from Input.Model
+  USES: Input.Model
+RETURN:
+- MUST: "render as ` [{name}]` — a leading space, square brackets around the name"
+- MUST: color the segment cyan (ANSI 0;36)
+- MUST: reset color after the closing bracket
+INVARIANT:
+- MUST: be the last segment in the output line
+---
+spec: Output
+INPUT:
+- USES: TokenSegment
+- USES: DirectorySegment
+- USES: GitBranchSegment
+- USES: VenvSegment
+- USES: ModelSegment
+RETURN:
+- MUST: concatenate segments in order without inserting any additional characters
+- MUST-NOT: append a trailing newline
+- MUST: write the result to stdout
+SIDE-EFFECT:
+- MUST-NOT: write anything to stderr under normal operation
+INVARIANT:
+- MUST: exit with code 0
