@@ -1,6 +1,7 @@
-pub mod format_tokens;
-pub mod input;
-pub mod segments;
+mod format_tokens;
+mod input;
+mod segments;
+mod util;
 
 use std::io::Read;
 

@@ -10,17 +10,12 @@ fn run_binary(input: &str) -> (i32, String, String) {
         .spawn()
         .expect("failed to spawn binary");
 
-    use std::io::Write;
-    if !input.is_empty() {
-        child
-            .stdin
-            .take()
-            .unwrap()
-            .write_all(input.as_bytes())
-            .unwrap();
+    {
+        use std::io::Write;
+        let mut stdin = child.stdin.take().unwrap();
+        stdin.write_all(input.as_bytes()).unwrap();
+        // stdin drops here, closing the pipe
     }
-    // Close stdin by dropping it
-    drop(child.stdin.take());
 
     let output = child.wait_with_output().expect("failed to wait");
     (

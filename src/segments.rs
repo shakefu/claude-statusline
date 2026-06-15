@@ -1,5 +1,6 @@
 use crate::format_tokens::format_tokens;
 use crate::input::StatusInput;
+use crate::util::path_basename;
 
 // ANSI color codes
 const RED: &str = "\x1b[0;31m";
@@ -13,8 +14,8 @@ const RESET: &str = "\x1b[0m";
 /// followed by a reset and a trailing space.
 /// Returns empty string when token counts are absent.
 pub fn token_segment(input: &StatusInput) -> String {
-    match (input.used_tokens, input.window_size) {
-        (Some(used), Some(total)) => {
+    match input.token_usage {
+        Some((used, total)) => {
             let color = if used >= 100_000 {
                 RED
             } else if used >= 60_000 {
@@ -30,7 +31,7 @@ pub fn token_segment(input: &StatusInput) -> String {
                 RESET
             )
         }
-        _ => String::new(),
+        None => String::new(),
     }
 }
 
@@ -53,12 +54,13 @@ pub fn format_git_branch(branch: &str) -> String {
 pub fn git_branch_segment() -> String {
     let output = std::process::Command::new("git")
         .args(["-c", "core.fsmonitor=false", "rev-parse", "--abbrev-ref", "HEAD"])
+        .stderr(std::process::Stdio::null())
         .output();
 
     match output {
         Ok(o) if o.status.success() => {
-            let branch = String::from_utf8_lossy(&o.stdout).trim().to_string();
-            format_git_branch(&branch)
+            let branch = String::from_utf8(o.stdout).unwrap_or_default();
+            format_git_branch(branch.trim())
         }
         _ => String::new(),
     }
@@ -70,10 +72,7 @@ pub fn format_venv(venv_path: &str) -> String {
     if venv_path.is_empty() {
         return String::new();
     }
-    let basename = venv_path
-        .rsplit('/')
-        .find(|s| !s.is_empty())
-        .unwrap_or(venv_path);
+    let basename = path_basename(venv_path);
     format!("{} ({}) {}", YELLOW, basename, RESET)
 }
 
@@ -102,14 +101,12 @@ mod tests {
 
     // Helper to build a StatusInput for tests
     fn make_input(
-        used_tokens: Option<u64>,
-        window_size: Option<u64>,
+        token_usage: Option<(u64, u64)>,
         directory_label: &str,
         model_name: Option<&str>,
     ) -> StatusInput {
         StatusInput {
-            used_tokens,
-            window_size,
+            token_usage,
             directory_label: directory_label.to_string(),
             model_name: model_name.map(|s| s.to_string()),
         }
@@ -119,25 +116,13 @@ mod tests {
 
     #[test]
     fn token_absent_returns_empty() {
-        let input = make_input(None, None, "", None);
-        assert_eq!(token_segment(&input), "");
-    }
-
-    #[test]
-    fn token_used_only_returns_empty() {
-        let input = make_input(Some(1000), None, "", None);
-        assert_eq!(token_segment(&input), "");
-    }
-
-    #[test]
-    fn token_window_only_returns_empty() {
-        let input = make_input(None, Some(200_000), "", None);
+        let input = make_input(None, "", None);
         assert_eq!(token_segment(&input), "");
     }
 
     #[test]
     fn token_under_60k_cyan() {
-        let input = make_input(Some(50_000), Some(200_000), "", None);
+        let input = make_input(Some((50_000, 200_000)), "", None);
         assert_eq!(
             token_segment(&input),
             "\x1b[0;36m50.0k/200.0k\x1b[0m "
@@ -146,7 +131,7 @@ mod tests {
 
     #[test]
     fn token_at_60k_yellow() {
-        let input = make_input(Some(60_000), Some(200_000), "", None);
+        let input = make_input(Some((60_000, 200_000)), "", None);
         assert_eq!(
             token_segment(&input),
             "\x1b[0;33m60.0k/200.0k\x1b[0m "
@@ -155,7 +140,7 @@ mod tests {
 
     #[test]
     fn token_75k_yellow() {
-        let input = make_input(Some(75_000), Some(200_000), "", None);
+        let input = make_input(Some((75_000, 200_000)), "", None);
         assert_eq!(
             token_segment(&input),
             "\x1b[0;33m75.0k/200.0k\x1b[0m "
@@ -164,13 +149,13 @@ mod tests {
 
     #[test]
     fn token_at_99999_yellow() {
-        let input = make_input(Some(99_999), Some(200_000), "", None);
+        let input = make_input(Some((99_999, 200_000)), "", None);
         assert!(token_segment(&input).starts_with("\x1b[0;33m"));
     }
 
     #[test]
     fn token_at_100k_red() {
-        let input = make_input(Some(100_000), Some(200_000), "", None);
+        let input = make_input(Some((100_000, 200_000)), "", None);
         assert_eq!(
             token_segment(&input),
             "\x1b[0;31m100.0k/200.0k\x1b[0m "
@@ -179,7 +164,7 @@ mod tests {
 
     #[test]
     fn token_150k_red() {
-        let input = make_input(Some(150_000), Some(200_000), "", None);
+        let input = make_input(Some((150_000, 200_000)), "", None);
         assert_eq!(
             token_segment(&input),
             "\x1b[0;31m150.0k/200.0k\x1b[0m "
@@ -188,7 +173,7 @@ mod tests {
 
     #[test]
     fn token_segment_has_trailing_space() {
-        let input = make_input(Some(1_000), Some(200_000), "", None);
+        let input = make_input(Some((1_000, 200_000)), "", None);
         let result = token_segment(&input);
         assert!(result.ends_with("\x1b[0m "), "expected trailing space after reset");
     }
@@ -197,7 +182,7 @@ mod tests {
 
     #[test]
     fn directory_with_label() {
-        let input = make_input(None, None, "owner/name", None);
+        let input = make_input(None, "owner/name", None);
         assert_eq!(
             directory_segment(&input),
             "\x1b[0;34mowner/name\x1b[0m"
@@ -206,7 +191,7 @@ mod tests {
 
     #[test]
     fn directory_empty_label() {
-        let input = make_input(None, None, "", None);
+        let input = make_input(None, "", None);
         assert_eq!(
             directory_segment(&input),
             "\x1b[0;34m\x1b[0m"
@@ -271,7 +256,7 @@ mod tests {
 
     #[test]
     fn model_with_name() {
-        let input = make_input(None, None, "", Some("Claude Sonnet 4"));
+        let input = make_input(None, "", Some("Claude Sonnet 4"));
         assert_eq!(
             model_segment(&input),
             "\x1b[0;36m [Claude Sonnet 4]\x1b[0m"
@@ -280,7 +265,7 @@ mod tests {
 
     #[test]
     fn model_absent() {
-        let input = make_input(None, None, "", None);
+        let input = make_input(None, "", None);
         assert_eq!(model_segment(&input), "");
     }
 }

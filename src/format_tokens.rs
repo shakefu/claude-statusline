@@ -9,7 +9,7 @@ pub fn format_tokens(count: u64) -> String {
     } else if count >= 1_000 {
         format!("{:.1}k", count as f64 / 1_000.0)
     } else {
-        format!("{}", count)
+        count.to_string()
     }
 }
 

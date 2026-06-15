@@ -1,9 +1,11 @@
 use serde::Deserialize;
 
+use crate::util::path_basename;
+
 /// Parsed status input produced from the JSON read off stdin.
 pub struct StatusInput {
-    pub used_tokens: Option<u64>,
-    pub window_size: Option<u64>,
+    /// Used-token count and window-size, both present or both absent.
+    pub token_usage: Option<(u64, u64)>,
     pub directory_label: String,
     pub model_name: Option<String>,
 }
@@ -54,18 +56,13 @@ pub fn parse_input(input: &str) -> Option<StatusInput> {
     let raw: RawInput = serde_json::from_str(input).ok()?;
 
     // Context window: both fields must be present to produce token counts.
-    let (used_tokens, window_size) = match raw.context_window {
-        Some(cw) => match (cw.total_input_tokens, cw.context_window_size) {
-            (Some(used), Some(size)) => (Some(used), Some(size)),
-            _ => (None, None),
-        },
-        None => (None, None),
-    };
+    let token_usage = raw
+        .context_window
+        .and_then(|cw| Some((cw.total_input_tokens?, cw.context_window_size?)));
 
     // Workspace → directory label.
     let directory_label = match raw.workspace {
         Some(ws) => {
-            // Try repo owner/name first.
             match ws.repo {
                 Some(Repo {
                     owner: Some(ref owner),
@@ -77,7 +74,7 @@ pub fn parse_input(input: &str) -> Option<StatusInput> {
                     // Fall back to basename of current_dir.
                     ws.current_dir
                         .as_deref()
-                        .and_then(|p| p.rsplit('/').find(|s| !s.is_empty()))
+                        .map(path_basename)
                         .unwrap_or("")
                         .to_string()
                 }
@@ -90,8 +87,7 @@ pub fn parse_input(input: &str) -> Option<StatusInput> {
     let model_name = raw.model.and_then(|m| m.display_name);
 
     Some(StatusInput {
-        used_tokens,
-        window_size,
+        token_usage,
         directory_label,
         model_name,
     })
@@ -136,8 +132,7 @@ mod tests {
             }
         }"#;
         let result = parse_input(json).unwrap();
-        assert_eq!(result.used_tokens, Some(1000));
-        assert_eq!(result.window_size, Some(200000));
+        assert_eq!(result.token_usage, Some((1000, 200000)));
         assert_eq!(result.directory_label, "acme/widgets");
         assert_eq!(result.model_name.as_deref(), Some("Claude Sonnet 4"));
     }
@@ -153,8 +148,7 @@ mod tests {
             }
         }"#;
         let result = parse_input(json).unwrap();
-        assert_eq!(result.used_tokens, Some(500));
-        assert_eq!(result.window_size, Some(100000));
+        assert_eq!(result.token_usage, Some((500, 100000)));
     }
 
     #[test]
@@ -165,8 +159,7 @@ mod tests {
             }
         }"#;
         let result = parse_input(json).unwrap();
-        assert!(result.used_tokens.is_none());
-        assert!(result.window_size.is_none());
+        assert!(result.token_usage.is_none());
     }
 
     #[test]
@@ -177,8 +170,7 @@ mod tests {
             }
         }"#;
         let result = parse_input(json).unwrap();
-        assert!(result.used_tokens.is_none());
-        assert!(result.window_size.is_none());
+        assert!(result.token_usage.is_none());
     }
 
     #[test]
@@ -190,16 +182,14 @@ mod tests {
             }
         }"#;
         let result = parse_input(json).unwrap();
-        assert!(result.used_tokens.is_none());
-        assert!(result.window_size.is_none());
+        assert!(result.token_usage.is_none());
     }
 
     #[test]
     fn context_window_absent() {
         let json = r#"{}"#;
         let result = parse_input(json).unwrap();
-        assert!(result.used_tokens.is_none());
-        assert!(result.window_size.is_none());
+        assert!(result.token_usage.is_none());
     }
 
     // ── Input.Workspace ─────────────────────────────────────────────
@@ -280,7 +270,6 @@ mod tests {
 
     #[test]
     fn current_dir_root_path() {
-        // "/" splits to ["", ""], last non-empty segment doesn't exist
         let json = r#"{
             "workspace": {
                 "current_dir": "/"
@@ -298,10 +287,6 @@ mod tests {
             }
         }"#;
         let result = parse_input(json).unwrap();
-        // rsplit('/') on "…project/" gives ["", "project", …] — first
-        // non-empty is "project" but we use .next() which is "".
-        // The filter(|s| !s.is_empty()) handles this and falls through.
-        // Actually let's verify the exact behavior.
         assert_eq!(result.directory_label, "project");
     }
 
