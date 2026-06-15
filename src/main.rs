@@ -15,7 +15,7 @@ fn main() {
     };
 
     let output = format!(
-        "{}{}{}{}{}",
+        "{}{}{}{}{} 🦀",
         segments::token_segment(&input),
         segments::directory_segment(&input),
         segments::git_branch_segment(),

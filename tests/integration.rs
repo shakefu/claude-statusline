@@ -93,9 +93,9 @@ fn full_json_exact_output() {
         "directory segment mismatch: {stdout:?}"
     );
 
-    // Check model segment at end
+    // Check model segment followed by crab at end
     assert!(
-        stdout.ends_with("\x1b[0;36m [Claude Sonnet 4]\x1b[0m"),
+        stdout.ends_with("\x1b[0;36m [Claude Sonnet 4]\x1b[0m 🦀"),
         "model segment mismatch: {stdout:?}"
     );
 }
